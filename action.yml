@@ -1,0 +1,74 @@
+name: devbord release
+description: Create a release on devbord, upload source maps and debug symbols, and report the deploy
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  url:
+    description: Address of devbord
+    default: https://devbord.com
+  project:
+    description: Number of the project (the last part of the DSN)
+    required: true
+  api-key:
+    description: API key of the board with write access; pass it from a secret
+    required: true
+  release:
+    description: Version, the same value the app sends as release
+    required: true
+  commit:
+    description: Commit of this build
+    default: ${{ github.sha }}
+  sourcemaps:
+    description: Folder with the built files and their .map files; leave empty to skip
+    default: ''
+  prefix:
+    description: Path the files are served from on your site
+    default: ~/
+  symbols:
+    description: Native libraries with debug symbols (.so, or .dSYM folders), one per line; leave empty to skip
+    default: ''
+  deploy:
+    description: Environment to report a deploy for, for example production; leave empty to skip
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Release and source maps
+      shell: bash
+      env:
+        DEVBORD_KEY: ${{ inputs.api-key }}
+        DEVBORD_URL: ${{ inputs.url }}
+        DEVBORD_PROJECT: ${{ inputs.project }}
+        DEVBORD_RELEASE: ${{ inputs.release }}
+        DEVBORD_COMMIT: ${{ inputs.commit }}
+        DEVBORD_PREFIX: ${{ inputs.prefix }}
+        DEVBORD_DEPLOY: ${{ inputs.deploy }}
+        DEVBORD_MAPS: ${{ inputs.sourcemaps }}
+      run: |
+        set -- --url "$DEVBORD_URL" --project "$DEVBORD_PROJECT" --release "$DEVBORD_RELEASE" --prefix "$DEVBORD_PREFIX"
+        if [ -n "$DEVBORD_COMMIT" ]; then set -- "$@" --commit "$DEVBORD_COMMIT"; fi
+        if [ -n "$DEVBORD_DEPLOY" ]; then set -- "$@" --deploy "$DEVBORD_DEPLOY"; fi
+        if [ -n "$DEVBORD_MAPS" ]; then set -- "$@" "$DEVBORD_MAPS"; fi
+        script="$GITHUB_ACTION_PATH/upload.js"
+        if [ ! -f "$script" ]; then script="$GITHUB_ACTION_PATH/../sourcemaps/upload.js"; fi
+        node "$script" "$@"
+
+    - name: Debug symbols
+      if: inputs.symbols != ''
+      shell: bash
+      env:
+        DEVBORD_KEY: ${{ inputs.api-key }}
+        DEVBORD_URL: ${{ inputs.url }}
+        DEVBORD_PROJECT: ${{ inputs.project }}
+        DEVBORD_SYMBOLS: ${{ inputs.symbols }}
+      run: |
+        files=()
+        while IFS= read -r line; do
+          if [ -n "$line" ]; then files+=("$line"); fi
+        done <<< "$DEVBORD_SYMBOLS"
+        script="$GITHUB_ACTION_PATH/upload-symbols.sh"
+        if [ ! -f "$script" ]; then script="$GITHUB_ACTION_PATH/../debug-files/upload-symbols.sh"; fi
+        sh "$script" "$DEVBORD_URL" "$DEVBORD_PROJECT" "${files[@]}"
